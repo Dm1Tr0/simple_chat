@@ -14,7 +14,9 @@
 #include <stdio.h>
 #include <sys/file.h> //ch put it into the header
 #include <fcntl.h> //ch put it into the header
-#define FILEPATH "./inmsg/temp.txt"
+#define FILEPATH "/home/dim/progs/my_own/multi_thread_dynamic_linc/simple_chat/target/inmsg.dat"
+
+
 
 #define COL_EXLO "\x1b[31m"
 #define COL_DlO  "\x1b[32m"
@@ -32,10 +34,12 @@
 
 #if defined(EXLOG) && EXLOG
 #define exit_ha(x,...) \
-		if(errno != 0){int errno_s = errno; fprintf(stderr,COL_EXLO x "on line : %d ; errno = %d : %s  \n" COL_R,##__VA_ARGS__, __LINE__,  errno_s, strerror(errno_s)); }\
-		else fprintf(stderr, "on line %d" x "\n", __LINE__,##__VA_ARGS__);\
-		exit(1); //ch for now
+{\
+	if(errno != 0){int errno_s = errno; fprintf(stderr,COL_EXLO x "on line : %d ; errno = %d : %s  \n" COL_R,##__VA_ARGS__, __LINE__,  errno_s, strerror(errno_s)); }\
+	else fprintf(stderr, "on line %d" x "\n", __LINE__,##__VA_ARGS__);\
+	exit(1);\
+}
 #else
-#define exit_ha(x,...) exit(1); 
+#define exit_ha(x,...) exit(1);
 #endif
 #endif

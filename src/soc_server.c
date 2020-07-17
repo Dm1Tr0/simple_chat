@@ -1,48 +1,32 @@
-/*
-    the project is under development
-*/
+
 #include "common.h"
 #define MAX_CLIENTS_NUM 80
 
 
 pthread_mutex_t m_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/*
-    this is a draft of a mapping type
-    that will be used in order to handle
-    mistakes
-
-   static enum errs {
-   errcodes
-   ...
-}
-    static char[] = {
-    1 : error while adding a new client func client_add
-    2 : error while removing a client client_remove
-    3 : error while sending a message to a client
-    4 : error while sending a message to all clients
-    5 : error while writing to myself
-}
-*/
-/* Client structure */
+/**the structure handles clients*/
 struct client {
-    /* Client remote address */
+    /** Client remote address */
     struct sockaddr_in addr;
-    /*clients name*/
+    /**clients name*/
     char c_name[40];
-    /* Connection file descriptor */
+    /** Connection file descriptor */
     int connfd;
-    /* Client unique identifier */
+    /** Client unique identifier */
     int cuid;
 };
 
-/* the variable that keeps a count of clients.
-It's much more comfortable to use atomic variable instead of
+/** the variable that keeps a count of clients.
+It's much more comfortable in our case to use atomic variable instead of
 mutex lock even in spite of the fact that we lose some speed */
 static _Atomic unsigned int client_count = 0;
 
 struct client *clients [MAX_CLIENTS_NUM];
-
+/**
+ * add a client
+ *@cli: slient structure that is commented
+ */
 static int client_add(struct client * cli)
 {
     pthread_mutex_lock(&m_lock);
@@ -58,22 +42,32 @@ static int client_add(struct client * cli)
     return 1;
 }
 
-
+/**
+ * remove client
+ *@c_uid: clients unique id that is kept in clients structure
+ */
 static int  client_remove(int c_uid)
 {
     pthread_mutex_lock(&m_lock);
     for (int i = 0; i < MAX_CLIENTS_NUM; i++) {
-        if (clients[i]->cuid == c_uid) {
-            clients[i] = NULL;
-            pthread_mutex_unlock(&m_lock);
-            return 0;
+        if(clients[i]) {
+            if (clients[i]->cuid == c_uid) {
+                clients[i] = NULL;
+                pthread_mutex_unlock(&m_lock);
+                return 0;
+            }
         }
     }
     pthread_mutex_unlock(&m_lock);
-    return 2;
+    return 1;
 }
 
-/* send a message */
+
+/**
+ *send a message
+ *@str: a text to sender
+ *@c_uid: unique id of a client that gets a message
+ */
 int message_direct(char * str, int c_uid )
 {
     pthread_mutex_lock(&m_lock);
@@ -83,7 +77,7 @@ int message_direct(char * str, int c_uid )
                 if (write(clients[i]->connfd, str, strlen(str)) < 0) {
                     perror("Write to descriptor failed");
                     pthread_mutex_unlock(&m_lock);
-                    return 3;
+                    return 1;
                 } else {
                     pthread_mutex_unlock(&m_lock);
                     return 0;
@@ -91,33 +85,45 @@ int message_direct(char * str, int c_uid )
             }
         }
     }
-    return 6;
+    return 1;
 }
-/* the function send a message to everybod */
-int message_all(char * str)
+
+/**
+ *the function send a message to everybod exept the sender
+ *@str: a text to sender
+ *@c_uid: unique id of a sender
+ */
+int message_all(char * str, int c_uid)
 {
     pthread_mutex_lock(&m_lock);
     for (int i = 0; i <MAX_CLIENTS_NUM ; ++i){
         if (clients[i]) {
+            if(clients[i]->cuid != c_uid){
             if (write(clients[i]->connfd, str, strlen(str)) < 0) {
                 pthread_mutex_unlock(&m_lock);
-                return 4;
+                return 1;
+            }
             }
         }
     }
     pthread_mutex_unlock(&m_lock);
     return 0;
 }
-/* the function send a message to the client */
+
+/**
+ *the function send a message to the sender
+ *@str: a text to sender
+ *@c_uid: unique id of the client
+ */
 int message_self(const char * str, int connfd){
     if (write(connfd, str, strlen(str)) < 0) {
         perror("Write to descriptor failed");
-        return 5;
+        return 1;
     }
     return 0;
 }
 
-/* the function outputs the names of all clients */
+/** the function outputs the names of all clients */
 char * list_users ()
 {
     char * nics = malloc(1);
@@ -139,7 +145,11 @@ char * list_users ()
     return nics;
 }
 
-/* get the client's personal id */
+
+/**
+ *get the client's personal id
+ *@name: name of a client whoo's uid you want to get
+ */
 int get_c_uid(char * name)
 {
     pthread_mutex_lock(&m_lock);
@@ -155,16 +165,28 @@ int get_c_uid(char * name)
     return 0;
 }
 
+char * inettos(void * addr)
+{
+     /* 16 is a length of ipv4 represented in string*/
+    char * addr_str = malloc(16);
+    inet_ntop(AF_INET, addr, addr_str, MAX);
+    return addr_str;
+}
+
 void help(int connfd){
-    message_self("/quit           :  exit_chatroom \n", connfd);//ch dont forget to put
+    message_self("/quit           :  exit_chatroom \n", connfd);
     message_self("/s_msg|who|text :  send a message\n", connfd);
     message_self("/s_msg_all|text :  send a message to all users\n", connfd);
     message_self("/list_users     :  to see who is currently online\n", connfd);
     message_self("/help           :  help\n",connfd);
     message_self("/in_msg         :  to see who  currently online\n", connfd);
-    message_self("  nicknames are currently unavailable \n", connfd);
-    message_self("  but they will be implemented soon\n", connfd);
+    message_self("/nick           :  change nickname \n", connfd);
+
 }
+/**
+ *the function handles client and respongs to clients requests in the different thread
+ *@arg: structure of a client to handle
+ */
 
 void *handle_client(void *arg)
 {
@@ -176,14 +198,15 @@ void *handle_client(void *arg)
     client_count++;
     struct client *cli = (struct client *)arg;
 
-    log("<< accept ");
-    log(" referenced by %d", cli->cuid);
+    log("<< accept referenced by %d; address : %s", cli->cuid, inettos(&cli->addr));
 
     sprintf(out, "<< %s has joined\r\n", cli->c_name);
-    message_all(out);
+    message_all(out, cli->cuid);
 
     message_self("users online : \n", cli->connfd);
     message_self(list_users (), cli->connfd);
+
+    bzero(out, sizeof(out));
 
     while ((read_byte = read(cli->connfd, buff_in, sizeof(buff_in))) > 0) {
         log("%s : %d",buff_in, read_byte);
@@ -203,15 +226,16 @@ void *handle_client(void *arg)
                     message_self("there is no such user currently in the chat \n",
                         cli->connfd);
             } else {
-                message_self("enter the name of the user",cli->connfd);
+                message_self("enter the name of the user \n",cli->connfd);
                 continue;
             }
             if ( (text = strtok(NULL, "|\n")) ) {
-                    strcat(text,"\n");
-                    log("text %s",text);
-                    message_direct(text,c_uid);
+                    sprintf(out," %s : %s\n",cli->c_name, text);
+                    log("text %s",out);
+                    message_direct(out,c_uid);
+                    bzero(out, sizeof(out));
             } else
-                    message_self("enter the text tou want to send ",
+                    message_self("enter the text tou want to send\n",
                         cli->connfd);
         } else if (!strcmp("/list_users", command )) {
             log("here");
@@ -221,34 +245,50 @@ void *handle_client(void *arg)
         } else if (!strcmp("/quit", command )) {
             break;
         } else if (!strcmp("/s_msg_all", command )) {
-            char * text = strtok(NULL, "|\n");
-            strcat(text,"\n");
-            log("text %s",text);
-            message_all(text);
+            char * text;
+
+            if ( (text = strtok(NULL, "|\n")) ) {
+                    sprintf(out,"%s to everyone : %s\n", cli->c_name, text);
+                    log("text %s",out);
+                    message_all(out, cli->cuid);
+                    bzero(out, sizeof(out));
+            } else
+                    message_self("enter the text tou want to send\n",
+                        cli->connfd);
 
         } else if (!strcmp("/help", command )) {
             help(cli->connfd);
+        } else if (!strcmp("/nick",command)) {
+            char * nick;
+
+            if ( (nick = strtok(NULL, "|\n")) ) {
+                    sprintf(out,"%s changed nicnkame to %s\n",cli->c_name,nick);
+                    message_all(out, cli->cuid);
+                    bzero(out, sizeof(out));
+                    bzero(cli->c_name,sizeof(cli->c_name));
+                    sprintf(cli->c_name, "%s", nick);
+
+            } else
+                    message_self("enter the nick you want to use\n",
+                        cli->connfd);
         }
 
         bzero(&buff_in, sizeof(buff_in));
     }
     /* Close connection */
     sprintf(out, "<< %s has left\r\n", cli->c_name);
-    message_all(out);
+    message_all(out, cli->cuid);
     close(cli->connfd);
 
-    /* Delete client from queue */
+    /* Delete client */
     client_remove(cli->cuid);
-    printf("<< quit ");
-    printf(" referenced by %d\n", cli->cuid);
+    log("quit referenced by %d", cli->cuid);
     free(cli);
     client_count--;
     /* detech a thread */
     pthread_detach(pthread_self());
     return NULL;
 }
-
-//ch void pirnt_clients_ip() do I need it
 
 int main()
 {
@@ -287,7 +327,6 @@ int main()
             continue;
         }
 
-        //ch inet_ntop(AF_INET, &addr, addres_str, MAX); in main you should add it
 
         /* Client settings */
         struct client *cli = (struct client *)malloc(sizeof(struct client));
@@ -296,7 +335,7 @@ int main()
         cli->cuid = client_count + 10;
         sprintf(cli->c_name, "%d", cli->cuid); //ch
 
-        /* Add client to the queue and fork thread */
+        /* Add client and make new thread */
         client_add(cli);
         pthread_create(&tid, NULL, &handle_client, (void*)cli);
 

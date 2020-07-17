@@ -1,2 +1,4 @@
 .gitignore
 target/
+docs/_build
+
